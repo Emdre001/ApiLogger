@@ -25,4 +25,4 @@ Logs are written to:
 ### ⛔ Rate Limiting Rules
 
 Rate limits are matched by **UserId** and **IpAddress**. The most specific rule applies first. If none match, a default rule is used.
-> ⏳ If a user exceeds their limit, they are blocked for 20 seconds.
+> ⏳ If a user exceeds their limit, they are blocked for a time.
