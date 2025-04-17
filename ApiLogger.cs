@@ -25,7 +25,7 @@ public class ApiLogger
     private static readonly Dictionary<string, List<DateTime>> RequestLog = new();
     
     // Constructor
-    public ApiLogger(IHttpContextAccessor httpContextAccessor, string controllerName, CosmosDbService cosmosDbService)
+    public ApiLogger(IHttpContextAccessor httpContextAccessor, string controllerName, CosmosDbService cosmosDbService, bool skipDefaultInit = false)
     {
         _httpContextAccessor = httpContextAccessor;
         _controllerName = controllerName;
@@ -36,28 +36,31 @@ public class ApiLogger
         _logFilePath = Path.Combine(logsDirectory, "ApiLogs.txt");
 
         ExtractHttpContextData(); // Populate request data
-        InitializeRateLimitRulesAsync().Wait(); // Load or create rules
+        if (!skipDefaultInit)
+    {
+        Task.Run(() => InitializeRateLimitRulesAsync()).Wait(); // eller .GetAwaiter().GetResult();
+    }
     }
 
-    private async Task InitializeRateLimitRulesAsync()
+    private async Task InitializeRateLimitRulesAsync(bool skipDefaults = false)
     {
         try
         {
             var query = _cosmosDbService.RulesContainer.GetItemQueryIterator<RateLimitRule>("SELECT * FROM c");
             var results = new List<RateLimitRule>();
+
             while (query.HasMoreResults)
             {
                 var response = await query.ReadNextAsync();
                 results.AddRange(response);
             }
-
-            if (results.Count == 0)
+            if (results.Count == 0 && !skipDefaults)
             {
                 Console.WriteLine("No Rules Found in CosmosDB");
                 results = GetDefaultRules();
                 foreach (var rule in results)
                 {
-                    rule.id = Guid.NewGuid().ToString(); // Add ID for CosmosDB
+                    rule.id = Guid.NewGuid().ToString();
                     await _cosmosDbService.RulesContainer.CreateItemAsync(rule, new PartitionKey(rule.id));
                     Console.WriteLine("DEFAULT RULES APPLIED");
                 }
@@ -68,7 +71,7 @@ public class ApiLogger
         catch (Exception ex)
         {
             Console.WriteLine($"[Rule Init Error] {ex.Message}");
-            _rateLimitRules = GetDefaultRules(); // Fallback to defaults in-memory
+            _rateLimitRules = GetDefaultRules();
         }
     }
 
@@ -217,6 +220,7 @@ public class ApiLogger
 {
     try
     {
+        await InitializeRateLimitRulesAsync(skipDefaults: true);
         var newRule = new RateLimitRule
         {
             id = Guid.NewGuid().ToString(),
