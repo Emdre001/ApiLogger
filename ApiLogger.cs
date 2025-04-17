@@ -23,6 +23,8 @@ public class ApiLogger
 
     // In-memory request logs and block records.
     private static readonly Dictionary<string, List<DateTime>> RequestLog = new();
+    private static Dictionary<string, DateTime> UserBlockStatus = new();
+
     
     // Constructor
     public ApiLogger(IHttpContextAccessor httpContextAccessor, string controllerName, CosmosDbService cosmosDbService, bool skipDefaultInit = false)
@@ -79,9 +81,9 @@ public class ApiLogger
     {
         return new List<RateLimitRule>
         {
-            new RateLimitRule { UserId = "Anonymous", IpAddress = "All", MaxRequests = 2, Type = "block",  BlockUntil = DateTime.UtcNow.AddSeconds(20) },
+            new RateLimitRule { UserId = "Anonymous", IpAddress = "All", MaxRequests = 5, Type = "block",  BlockUntil = DateTime.UtcNow.AddSeconds(20) },
             new RateLimitRule { UserId = "Test person 1", IpAddress = "All", MaxRequests = 50, Type = "block", BlockUntil = DateTime.UtcNow.AddSeconds(20) },
-            new RateLimitRule { UserId = "All", IpAddress = "All", MaxRequests = 1, Type = "allow", BlockUntil = DateTime.UtcNow.AddSeconds(0) }
+            new RateLimitRule { UserId = "All", IpAddress = "All", MaxRequests = 3, Type = "allow", BlockUntil = DateTime.UtcNow.AddSeconds(0) }
         };
     }
 
@@ -115,35 +117,36 @@ public class ApiLogger
     _stopwatch = Stopwatch.StartNew();
     string key = _userId + "_" + _ipAddress;
 
-    // Fetch the rate-limiting rules from Cosmos DB
-    var rateLimitRules = await _cosmosDbService.GetRateLimitRulesAsync(); // Fetch the rate limit rules from Cosmos DB
-
-    // Initialize result
     var result = new ApiLogResult();
+
+    // Get rate limit rules from Cosmos DB
+    var rateLimitRules = await _cosmosDbService.GetRateLimitRulesAsync();
 
     if (rateLimitRules == null || !rateLimitRules.Any())
     {
+        Console.WriteLine("------ERROR: No rate limit rules found------");
         result.IsRequestAllowed = false;
         result.BlockMessage = "Rate limiting rules not found.";
         return result;
     }
 
-    // Find the most applicable rule
+    // Find the most specific matching rule
     var matchingRule = rateLimitRules
         .Where(r =>
             (r.UserId == "All" || r.UserId == _userId) &&
             (r.IpAddress == "All" || r.IpAddress == _ipAddress))
-        .OrderByDescending(r => (r.UserId != "All" ? 1 : 0) + (r.IpAddress != "All" ? 1 : 0)) // most specific first
+        .OrderByDescending(r => (r.UserId != "All" ? 1 : 0) + (r.IpAddress != "All" ? 1 : 0))
         .FirstOrDefault();
 
     if (matchingRule == null)
     {
+        Console.WriteLine("------ERROR: No matching rule found------");
         result.IsRequestAllowed = false;
-        result.BlockMessage = "No applicable rate limit rule found. Access denied.";
+        result.BlockMessage = "No applicable rate limit rule found.";
         return result;
     }
 
-    // If the rule is of type 'allow', bypass rate limiting
+    // Allow rules skip all checks
     if (matchingRule.Type.Equals("allow", StringComparison.OrdinalIgnoreCase))
     {
         result.IsRequestAllowed = true;
@@ -152,41 +155,50 @@ public class ApiLogger
     }
 
     // Check if user is currently blocked
-    if (matchingRule.Type.Equals("block", StringComparison.OrdinalIgnoreCase))
+    if (UserBlockStatus.TryGetValue(key, out DateTime blockedUntil))
     {
-        if (DateTime.UtcNow < matchingRule.BlockUntil)
+        if (DateTime.UtcNow < blockedUntil)
         {
-            result.BlockMessage = $"User is temporarily blocked until {matchingRule.BlockUntil:O}";
+            result.IsRequestAllowed = false;
+            result.BlockMessage = $"You are currently blocked until {blockedUntil:O}";
             return result;
+        }
+        else
+        {
+            // Unblock user and reset tracking
+            UserBlockStatus.Remove(key);
+            RequestLog.Remove(key); // Clear request history after block expires
         }
     }
 
-    // If the user is not blocked, continue to track their requests
+    // Track requests per minute
     if (!RequestLog.TryGetValue(key, out var timestamps))
     {
         timestamps = new List<DateTime>();
         RequestLog[key] = timestamps;
     }
 
-    // Remove old timestamps (older than 1 minute)
     timestamps.RemoveAll(t => t < DateTime.UtcNow.AddMinutes(-1));
-
-    // Add the current timestamp to the log
     timestamps.Add(DateTime.UtcNow);
 
-    // Check if the user exceeded the max requests allowed
     if (timestamps.Count > matchingRule.MaxRequests)
     {
+        // Calculate dynamic block duration from rule's BlockUntil value
+        var blockDurationSeconds = (matchingRule.BlockUntil - DateTime.UtcNow).TotalSeconds;
+        if (blockDurationSeconds <= 0) blockDurationSeconds = 20; // fallback if date is stale
+
+        var blockUntil = DateTime.UtcNow.AddSeconds(blockDurationSeconds);
+        UserBlockStatus[key] = blockUntil;
+
         result.IsRequestAllowed = false;
-        result.BlockMessage = "Too many requests. You are temporarily blocked for 20 seconds.";
+        result.BlockMessage = $"Too many requests. You are blocked until {blockUntil:O}";
         return result;
     }
 
-    result.IsRequestAllowed = true;  // Request is allowed
+    result.IsRequestAllowed = true;
     result.BlockMessage = string.Empty;
     return result;
 }
-
 
     // Stops the logging process, logs the data, and writes to storage
     public async Task ApiLogStop()
