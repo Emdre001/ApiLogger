@@ -40,37 +40,37 @@ public class ApiLogger
 }
 
     private async Task InitializeRateLimitRulesAsync()
-{
-    try
     {
-        var query = _cosmosDbService.RulesContainer.GetItemQueryIterator<RateLimitRule>("SELECT * FROM c");
-        var results = new List<RateLimitRule>();
-        while (query.HasMoreResults)
+        try
         {
-            var response = await query.ReadNextAsync();
-            results.AddRange(response);
-        }
-
-        if (results.Count == 0)
-        {
-            Console.WriteLine("No Rules Found in CosmosDB");
-            results = GetDefaultRules();
-            foreach (var rule in results)
+            var query = _cosmosDbService.RulesContainer.GetItemQueryIterator<RateLimitRule>("SELECT * FROM c");
+            var results = new List<RateLimitRule>();
+            while (query.HasMoreResults)
             {
-                rule.id = Guid.NewGuid().ToString(); // Add ID for CosmosDB
-                await _cosmosDbService.RulesContainer.CreateItemAsync(rule, new PartitionKey(rule.id));
-                Console.WriteLine("DEFAULT RULES APPLIED");
+                var response = await query.ReadNextAsync();
+                results.AddRange(response);
             }
-        }
 
-        _rateLimitRules = results;
+            if (results.Count == 0)
+            {
+                Console.WriteLine("No Rules Found in CosmosDB");
+                results = GetDefaultRules();
+                foreach (var rule in results)
+                {
+                    rule.id = Guid.NewGuid().ToString(); // Add ID for CosmosDB
+                    await _cosmosDbService.RulesContainer.CreateItemAsync(rule, new PartitionKey(rule.id));
+                    Console.WriteLine("DEFAULT RULES APPLIED");
+                }
+            }
+
+            _rateLimitRules = results;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Rule Init Error] {ex.Message}");
+            _rateLimitRules = GetDefaultRules(); // Fallback to defaults in-memory
+        }
     }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[Rule Init Error] {ex.Message}");
-        _rateLimitRules = GetDefaultRules(); // Fallback to defaults in-memory
-    }
-}
 
     private List<RateLimitRule> GetDefaultRules()
     {
@@ -184,6 +184,33 @@ public class ApiLogger
     return result;
 }
 
+public async Task<bool> SetRule(string userId, string ipAddress, int maxRequests, string type, int blockDurationSeconds = 0)
+{
+    try
+    {
+        var newRule = new RateLimitRule
+        {
+            id = Guid.NewGuid().ToString(),
+            UserId = userId,
+            IpAddress = ipAddress,
+            MaxRequests = maxRequests,
+            Type = type,
+            BlockUntil = type.Equals("block", StringComparison.OrdinalIgnoreCase) 
+                ? DateTime.UtcNow.AddSeconds(blockDurationSeconds) 
+                : DateTime.UtcNow
+        };
+
+        await _cosmosDbService.RulesContainer.CreateItemAsync(newRule, new PartitionKey(newRule.id));
+
+        Console.WriteLine($"[SetRule] Rule added: UserId={userId}, IP={ipAddress}, MaxRequests={maxRequests}, Type={type}, BlockUntil={newRule.BlockUntil}");
+        return true;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[SetRule Error] {ex.Message}");
+        return false;
+    }
+}
 
     // Stops the logging process, logs the data, and writes to storage
     public async Task ApiLogStop()
