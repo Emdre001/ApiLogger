@@ -81,9 +81,9 @@ public class ApiLogger
     {
         return new List<RateLimitRule>
         {
-            new RateLimitRule { UserId = "Anonymous", IpAddress = "All", MaxRequests = 5, Type = "block",  BlockUntil = DateTime.UtcNow.AddSeconds(20) },
-            new RateLimitRule { UserId = "Test person 1", IpAddress = "All", MaxRequests = 50, Type = "block", BlockUntil = DateTime.UtcNow.AddSeconds(20) },
-            new RateLimitRule { UserId = "All", IpAddress = "All", MaxRequests = 3, Type = "allow", BlockUntil = DateTime.UtcNow.AddSeconds(0) }
+            new RateLimitRule { UserId = "Anonymous", IpAddress = "All", MaxRequests = 5, Type = "block",  BlockDurationSeconds= 20 },
+            new RateLimitRule { UserId = "Test person 1", IpAddress = "All", MaxRequests = 50, Type = "block", BlockDurationSeconds= 20 },
+            new RateLimitRule { UserId = "All", IpAddress = "All", MaxRequests = 3, Type = "allow", BlockDurationSeconds= 20 }
         };
     }
 
@@ -184,10 +184,10 @@ public class ApiLogger
     if (timestamps.Count > matchingRule.MaxRequests)
     {
         // Calculate dynamic block duration from rule's BlockUntil value
-        var blockDurationSeconds = (matchingRule.BlockUntil - DateTime.UtcNow).TotalSeconds;
-        if (blockDurationSeconds <= 0) blockDurationSeconds = 20; // fallback if date is stale
+        var blockDuration = matchingRule.BlockDurationSeconds > 0 ? matchingRule.BlockDurationSeconds : 20;
+        var blockUntil = DateTime.UtcNow.AddSeconds(blockDuration);
+        UserBlockStatus[key] = blockUntil;
 
-        var blockUntil = DateTime.UtcNow.AddSeconds(blockDurationSeconds);
         UserBlockStatus[key] = blockUntil;
 
         result.IsRequestAllowed = false;
@@ -240,14 +240,12 @@ public class ApiLogger
             IpAddress = ipAddress,
             MaxRequests = maxRequests,
             Type = type,
-            BlockUntil = type.Equals("block", StringComparison.OrdinalIgnoreCase) 
-                ? DateTime.UtcNow.AddSeconds(blockDurationSeconds) 
-                : DateTime.UtcNow
+            BlockDurationSeconds = blockDurationSeconds
         };
 
         await _cosmosDbService.RulesContainer.CreateItemAsync(newRule, new PartitionKey(newRule.id));
 
-        Console.WriteLine($"[SetRule] Rule added: UserId={userId}, IP={ipAddress}, MaxRequests={maxRequests}, Type={type}, BlockUntil={newRule.BlockUntil}");
+        Console.WriteLine($"[SetRule] Rule added: UserId={userId}, IP={ipAddress}, MaxRequests={maxRequests}, Type={type}, BlockDuration={blockDurationSeconds}");
         return true;
     }
     catch (Exception ex)
