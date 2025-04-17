@@ -26,18 +26,18 @@ public class ApiLogger
     
     // Constructor
     public ApiLogger(IHttpContextAccessor httpContextAccessor, string controllerName, CosmosDbService cosmosDbService)
-{
-    _httpContextAccessor = httpContextAccessor;
-    _controllerName = controllerName;
-    _cosmosDbService = cosmosDbService;
+    {
+        _httpContextAccessor = httpContextAccessor;
+        _controllerName = controllerName;
+        _cosmosDbService = cosmosDbService;
 
-    string logsDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs");
-    if (!Directory.Exists(logsDirectory)) Directory.CreateDirectory(logsDirectory);
-    _logFilePath = Path.Combine(logsDirectory, "ApiLogs.txt");
+        string logsDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs");
+        if (!Directory.Exists(logsDirectory)) Directory.CreateDirectory(logsDirectory);
+        _logFilePath = Path.Combine(logsDirectory, "ApiLogs.txt");
 
-    ExtractHttpContextData(); // Populate request data
-    InitializeRateLimitRulesAsync().Wait(); // Load or create rules
-}
+        ExtractHttpContextData(); // Populate request data
+        InitializeRateLimitRulesAsync().Wait(); // Load or create rules
+    }
 
     private async Task InitializeRateLimitRulesAsync()
     {
@@ -184,33 +184,6 @@ public class ApiLogger
     return result;
 }
 
-public async Task<bool> SetRule(string userId, string ipAddress, int maxRequests, string type, int blockDurationSeconds = 0)
-{
-    try
-    {
-        var newRule = new RateLimitRule
-        {
-            id = Guid.NewGuid().ToString(),
-            UserId = userId,
-            IpAddress = ipAddress,
-            MaxRequests = maxRequests,
-            Type = type,
-            BlockUntil = type.Equals("block", StringComparison.OrdinalIgnoreCase) 
-                ? DateTime.UtcNow.AddSeconds(blockDurationSeconds) 
-                : DateTime.UtcNow
-        };
-
-        await _cosmosDbService.RulesContainer.CreateItemAsync(newRule, new PartitionKey(newRule.id));
-
-        Console.WriteLine($"[SetRule] Rule added: UserId={userId}, IP={ipAddress}, MaxRequests={maxRequests}, Type={type}, BlockUntil={newRule.BlockUntil}");
-        return true;
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[SetRule Error] {ex.Message}");
-        return false;
-    }
-}
 
     // Stops the logging process, logs the data, and writes to storage
     public async Task ApiLogStop()
@@ -239,6 +212,35 @@ public async Task<bool> SetRule(string userId, string ipAddress, int maxRequests
 
         await SaveLogToCosmosAsync(logEntry);
     }
+
+    public async Task<bool> SetRule(string userId, string ipAddress, int maxRequests, string type, int blockDurationSeconds)
+{
+    try
+    {
+        var newRule = new RateLimitRule
+        {
+            id = Guid.NewGuid().ToString(),
+            UserId = userId,
+            IpAddress = ipAddress,
+            MaxRequests = maxRequests,
+            Type = type,
+            BlockUntil = type.Equals("block", StringComparison.OrdinalIgnoreCase) 
+                ? DateTime.UtcNow.AddSeconds(blockDurationSeconds) 
+                : DateTime.UtcNow
+        };
+
+        await _cosmosDbService.RulesContainer.CreateItemAsync(newRule, new PartitionKey(newRule.id));
+
+        Console.WriteLine($"[SetRule] Rule added: UserId={userId}, IP={ipAddress}, MaxRequests={maxRequests}, Type={type}, BlockUntil={newRule.BlockUntil}");
+        return true;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[SetRule Error] {ex.Message}");
+        return false;
+    }
+}
+
 
     // Writes log message to a local file
     private void LogToFile(string message, bool addNewLine = false)
