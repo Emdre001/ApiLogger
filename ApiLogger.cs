@@ -76,7 +76,7 @@ public class ApiLogger
     {
         return new List<RateLimitRule>
         {
-            new RateLimitRule { UserId = "Anonymous", IpAddress = "127.0.0.1", MaxRequests = 2, Type = "block",  BlockUntil = DateTime.UtcNow.AddSeconds(20) },
+            new RateLimitRule { UserId = "Anonymous", IpAddress = "All", MaxRequests = 2, Type = "block",  BlockUntil = DateTime.UtcNow.AddSeconds(20) },
             new RateLimitRule { UserId = "Test person 1", IpAddress = "All", MaxRequests = 50, Type = "block", BlockUntil = DateTime.UtcNow.AddSeconds(20) },
             new RateLimitRule { UserId = "All", IpAddress = "All", MaxRequests = 1, Type = "allow", BlockUntil = DateTime.UtcNow.AddSeconds(0) }
         };
